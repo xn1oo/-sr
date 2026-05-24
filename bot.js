@@ -5,11 +5,14 @@ const {
   Routes,
   SlashCommandBuilder,
   EmbedBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ActionRowBuilder,
 } = require('discord.js');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-
 const STAFF_ROLE_NAME = '𝐀𝐝𝐦𝐢𝐧𝐬𝐭𝐫𝐚𝐭𝐢𝐨𝐧 𝐓𝐞𝐚𝐦';
 
 const client = new Client({
@@ -21,7 +24,6 @@ const client = new Client({
 });
 
 const sessions = {};
-const wizards = {};
 
 const commands = [
   new SlashCommandBuilder()
@@ -68,147 +70,154 @@ function formatUptime(startTime) {
 
 function buildSessionEmbed(data, uptime) {
   const embed = new EmbedBuilder()
-    .setTitle('🎮 Active Session')
     .setColor('#00FF7F')
     .addFields(
       { name: '🟢 STATUS', value: '**Online**', inline: true },
-      { name: '👥 PLAYERS', value: `**${data.playerCount}/${data.maxPlayers}**`, inline: true },
+      { name: '👥 PLAYERS', value: `**${data.playerCount}**`, inline: true },
       { name: '\u200B', value: '\u200B', inline: true },
       { name: '🔗 SERVER LINK', value: data.serverLink, inline: false },
       { name: '⏱️ SESSION UPTIME', value: uptime, inline: true },
-      { name: '🕐 SESSION END', value: data.endTime, inline: true },
-      { name: '📅 NEXT SESSION', value: data.nextSession, inline: false }
+      { name: '🕐 SESSION END', value: data.sessionEnd, inline: true },
+      { name: '📋 INFO', value: data.info, inline: false }
     )
     .setFooter({ text: 'Session is live! Join now.' });
 
-  if (data.imageUrl) embed.setImage(data.imageUrl);
+  if (data.imageUrl && data.imageUrl.startsWith('http')) {
+    embed.setImage(data.imageUrl);
+  }
+
   return embed;
 }
 
 client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-  const { commandName } = interaction;
 
-  if (commandName === 'session' && interaction.options.getSubcommand() === 'start') {
-    if (!isStaff(interaction.member)) {
-      return interaction.reply({ content: '❌ You do not have permission to start a session.', ephemeral: true });
+  if (interaction.isChatInputCommand()) {
+    const { commandName } = interaction;
+
+    if (commandName === 'session' && interaction.options.getSubcommand() === 'start') {
+      if (!isStaff(interaction.member)) {
+        return interaction.reply({ content: '❌ You do not have permission to start a session.', ephemeral: true });
+      }
+      if (sessions[interaction.channelId]) {
+        return interaction.reply({ content: '❌ There is already an active session in this channel.', ephemeral: true });
+      }
+
+      const modal = new ModalBuilder()
+        .setCustomId('session_modal')
+        .setTitle('🎮 Start a Session');
+
+      const serverLinkInput = new TextInputBuilder()
+        .setCustomId('serverLink')
+        .setLabel('Server Link')
+        .setPlaceholder('e.g. fivem://connect/123.456.789.0')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const playerCountInput = new TextInputBuilder()
+        .setCustomId('playerCount')
+        .setLabel('Player Count')
+        .setPlaceholder('e.g. 15/15')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const sessionEndInput = new TextInputBuilder()
+        .setCustomId('sessionEnd')
+        .setLabel('Session End')
+        .setPlaceholder('e.g. In 12 hr, 4 mins')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const infoInput = new TextInputBuilder()
+        .setCustomId('info')
+        .setLabel('Info / Next Session')
+        .setPlaceholder('e.g. Next session: Saturday at 6PM')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true);
+
+      const imageInput = new TextInputBuilder()
+        .setCustomId('imageUrl')
+        .setLabel('Image URL (optional)')
+        .setPlaceholder('Paste a direct image link or leave blank')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(serverLinkInput),
+        new ActionRowBuilder().addComponents(playerCountInput),
+        new ActionRowBuilder().addComponents(sessionEndInput),
+        new ActionRowBuilder().addComponents(infoInput),
+        new ActionRowBuilder().addComponents(imageInput),
+      );
+
+      await interaction.showModal(modal);
+      return;
     }
-    if (sessions[interaction.channelId]) {
-      return interaction.reply({ content: '❌ There is already an active session in this channel.', ephemeral: true });
+
+    if (commandName === 'session' && interaction.options.getSubcommand() === 'end') {
+      if (!isStaff(interaction.member)) {
+        return interaction.reply({ content: '❌ You do not have permission to end a session.', ephemeral: true });
+      }
+      const session = sessions[interaction.channelId];
+      if (!session) {
+        return interaction.reply({ content: '❌ There is no active session in this channel.', ephemeral: true });
+      }
+
+      clearInterval(session.intervalId);
+
+      try {
+        const channel = await client.channels.fetch(interaction.channelId);
+        const msg = await channel.messages.fetch(session.messageId);
+        const endedEmbed = new EmbedBuilder()
+          .setTitle('🎮 Session Ended')
+          .setColor('#FF4444')
+          .addFields(
+            { name: '🔴 STATUS', value: '**Offline**', inline: true },
+            { name: '⏱️ TOTAL UPTIME', value: formatUptime(session.startTime), inline: true },
+            { name: '📋 INFO', value: session.data.info, inline: false }
+          )
+          .setFooter({ text: 'Session has ended. See you next time!' });
+        if (session.data.imageUrl && session.data.imageUrl.startsWith('http')) {
+          endedEmbed.setImage(session.data.imageUrl);
+        }
+        await msg.edit({ embeds: [endedEmbed] });
+      } catch (e) {}
+
+      delete sessions[interaction.channelId];
+      return interaction.reply({ content: '✅ Session has been ended.', ephemeral: true });
     }
-    try {
-      const dmChannel = await interaction.user.createDM();
-      wizards[interaction.user.id] = {
-        step: 1,
-        channelId: interaction.channelId,
-        guildId: interaction.guildId,
-        data: {},
-        dmChannel,
-      };
-      await dmChannel.send('👋 **Session Setup Wizard**\n\nLets get your session set up!\n\n**Step 1/6 — Server Link:**\nPlease enter the server link:');
-      await interaction.reply({ content: '📬 Check your DMs! I sent you the session setup wizard.', ephemeral: true });
-    } catch (err) {
-      await interaction.reply({ content: '❌ I couldn\'t DM you. Please enable DMs from server members and try again.', ephemeral: true });
+
+    if (commandName === 'playercount') {
+      const session = sessions[interaction.channelId];
+      if (!session) {
+        return interaction.reply({ content: '❌ There is no active session in this channel.', ephemeral: true });
+      }
+      const count = interaction.options.getString('count');
+      session.data.playerCount = count;
+      try {
+        const channel = await client.channels.fetch(interaction.channelId);
+        const msg = await channel.messages.fetch(session.messageId);
+        await msg.edit({ embeds: [buildSessionEmbed(session.data, formatUptime(session.startTime))] });
+      } catch (e) {}
+      return interaction.reply({ content: `✅ Player count updated to **${count}**`, ephemeral: true });
     }
-    return;
   }
 
-  if (commandName === 'session' && interaction.options.getSubcommand() === 'end') {
-    if (!isStaff(interaction.member)) {
-      return interaction.reply({ content: '❌ You do not have permission to end a session.', ephemeral: true });
-    }
-    const session = sessions[interaction.channelId];
-    if (!session) {
-      return interaction.reply({ content: '❌ There is no active session in this channel.', ephemeral: true });
-    }
-    clearInterval(session.intervalId);
+  if (interaction.isModalSubmit() && interaction.customId === 'session_modal') {
+    const data = {
+      serverLink: interaction.fields.getTextInputValue('serverLink'),
+      playerCount: interaction.fields.getTextInputValue('playerCount'),
+      sessionEnd: interaction.fields.getTextInputValue('sessionEnd'),
+      info: interaction.fields.getTextInputValue('info'),
+      imageUrl: interaction.fields.getTextInputValue('imageUrl') || null,
+    };
+
+    await interaction.deferReply({ ephemeral: true });
+
     try {
-      const channel = await client.channels.fetch(interaction.channelId);
-      const msg = await channel.messages.fetch(session.messageId);
-      const endedEmbed = new EmbedBuilder()
-        .setTitle('🎮 Session Ended')
-        .setColor('#FF4444')
-        .addFields(
-          { name: '🔴 STATUS', value: '**Offline**', inline: true },
-          { name: '⏱️ TOTAL UPTIME', value: formatUptime(session.startTime), inline: true },
-          { name: '📅 NEXT SESSION', value: session.data.nextSession, inline: false }
-        )
-        .setFooter({ text: 'Session has ended. See you next time!' });
-      if (session.data.imageUrl) endedEmbed.setImage(session.data.imageUrl);
-      await msg.edit({ embeds: [endedEmbed] });
-    } catch (e) {}
-    delete sessions[interaction.channelId];
-    return interaction.reply({ content: '✅ Session has been ended.', ephemeral: true });
-  }
-
-  if (commandName === 'playercount') {
-    const session = sessions[interaction.channelId];
-    if (!session) {
-      return interaction.reply({ content: '❌ There is no active session in this channel.', ephemeral: true });
-    }
-    const count = interaction.options.getString('count');
-    const parts = count.split('/');
-    if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) {
-      return interaction.reply({ content: '❌ Invalid format. Use something like 11/15', ephemeral: true });
-    }
-    session.data.playerCount = parts[0].trim();
-    session.data.maxPlayers = parts[1].trim();
-    try {
-      const channel = await client.channels.fetch(interaction.channelId);
-      const msg = await channel.messages.fetch(session.messageId);
-      await msg.edit({ embeds: [buildSessionEmbed(session.data, formatUptime(session.startTime))] });
-    } catch (e) {}
-    return interaction.reply({ content: `✅ Player count updated to **${count}**`, ephemeral: true });
-  }
-});
-
-client.on('messageCreate', async message => {
-  if (message.author.bot) return;
-  if (message.guild) return;
-
-  const wizard = wizards[message.author.id];
-  if (!wizard) return;
-
-  const { step, data, dmChannel } = wizard;
-
-  if (step === 1) {
-    data.serverLink = message.content.trim();
-    wizard.step = 2;
-    await dmChannel.send('**Step 2/6 — Current Player Count:**\nHow many players are currently in? (e.g. 10)');
-  } else if (step === 2) {
-    if (isNaN(message.content.trim())) return dmChannel.send('❌ Please enter a number only (e.g. 10)');
-    data.playerCount = message.content.trim();
-    wizard.step = 3;
-    await dmChannel.send('**Step 3/6 — Max Players:**\nWhat is the max player count? (e.g. 15)');
-  } else if (step === 3) {
-    if (isNaN(message.content.trim())) return dmChannel.send('❌ Please enter a number only (e.g. 15)');
-    data.maxPlayers = message.content.trim();
-    wizard.step = 4;
-    await dmChannel.send('**Step 4/6 — Session Duration:**\nHow many hours will this session run for? (e.g. 3)');
-  } else if (step === 4) {
-    if (isNaN(message.content.trim())) return dmChannel.send('❌ Please enter a number only (e.g. 3)');
-    const hours = parseFloat(message.content.trim());
-    const endDate = new Date(Date.now() + hours * 60 * 60 * 1000);
-    data.endTime = endDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) + ` (${hours}hr)`;
-    wizard.step = 5;
-    await dmChannel.send('**Step 5/6 — Next Session:**\nWhen is the next session? (e.g. Tomorrow at 6PM)');
-  } else if (step === 5) {
-    data.nextSession = message.content.trim();
-    wizard.step = 6;
-    await dmChannel.send('**Step 6/6 — Session Image:**\nPlease attach an image for the session, or type skip to post without one.');
-  } else if (step === 6) {
-    if (message.attachments.size > 0) {
-      data.imageUrl = message.attachments.first().url;
-    } else if (message.content.toLowerCase() !== 'skip') {
-      return dmChannel.send('❌ Please attach an image or type skip.');
-    }
-    delete wizards[message.author.id];
-    try {
-      const guild = await client.guilds.fetch(wizard.guildId);
-      const channel = await guild.channels.fetch(wizard.channelId);
       const startTime = Date.now();
       const embed = buildSessionEmbed(data, '0h 0m 0s');
-      const msg = await channel.send({ embeds: [embed] });
+      const msg = await interaction.channel.send({ embeds: [embed] });
+
       const intervalId = setInterval(async () => {
         try {
           await msg.edit({ embeds: [buildSessionEmbed(data, formatUptime(startTime))] });
@@ -216,16 +225,18 @@ client.on('messageCreate', async message => {
           clearInterval(intervalId);
         }
       }, 30000);
-      sessions[wizard.channelId] = {
+
+      sessions[interaction.channelId] = {
         messageId: msg.id,
         startTime,
         data,
         intervalId,
       };
-      await dmChannel.send('✅ **Session is now live!** The embed has been posted in the channel.');
+
+      await interaction.editReply({ content: '✅ Session is now live!' });
     } catch (err) {
-      await dmChannel.send('❌ Something went wrong posting the session. Make sure I have permission to send messages in that channel.');
       console.error(err);
+      await interaction.editReply({ content: '❌ Something went wrong posting the session.' });
     }
   }
 });
