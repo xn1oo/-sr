@@ -71,16 +71,22 @@ function formatUptime(startTime) {
 function buildSessionEmbed(data, uptime) {
   const embed = new EmbedBuilder()
     .setColor('#00FF7F')
+    .setTitle(`🎮 ${data.serverName || 'Active Session'}`)
     .addFields(
-      { name: '🟢 STATUS', value: '**Online**', inline: true },
-      { name: '👥 PLAYERS', value: `**${data.playerCount}**`, inline: true },
-      { name: '\u200B', value: '\u200B', inline: true },
-      { name: '🔗 SERVER LINK', value: data.serverLink, inline: false },
-      { name: '⏱️ SESSION UPTIME', value: uptime, inline: true },
-      { name: '🕐 SESSION END', value: data.sessionEnd, inline: true },
-      { name: '📋 INFO', value: data.info, inline: false }
+      { name: '🟢  STATUS', value: '```\nOnline\n```', inline: true },
+      { name: '👥  PLAYERS', value: `\`\`\`\n${data.playerCount}\n\`\`\``, inline: true },
+      { name: '\u200B', value: '\u200B', inline: false },
+      { name: '🕐  SESSION END', value: `\`\`\`\n${data.sessionEnd}\n\`\`\``, inline: true },
+      { name: '⏱️  SESSION UPTIME', value: `\`\`\`\n${uptime}\n\`\`\``, inline: true },
+      { name: '\u200B', value: '\u200B', inline: false },
+      { name: '🔗  SERVER LINK', value: data.serverLink, inline: false },
+      { name: '📋  INFO', value: data.info, inline: false },
     )
     .setFooter({ text: 'Session is live! Join now.' });
+
+  if (data.thumbnailUrl && data.thumbnailUrl.startsWith('http')) {
+    embed.setThumbnail(data.thumbnailUrl);
+  }
 
   if (data.imageUrl && data.imageUrl.startsWith('http')) {
     embed.setImage(data.imageUrl);
@@ -106,6 +112,13 @@ client.on('interactionCreate', async interaction => {
         .setCustomId('session_modal')
         .setTitle('🎮 Start a Session');
 
+      const serverNameInput = new TextInputBuilder()
+        .setCustomId('serverName')
+        .setLabel('Server Name')
+        .setPlaceholder('e.g. Maryland State Roleplay')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
       const serverLinkInput = new TextInputBuilder()
         .setCustomId('serverLink')
         .setLabel('Server Link')
@@ -122,31 +135,24 @@ client.on('interactionCreate', async interaction => {
 
       const sessionEndInput = new TextInputBuilder()
         .setCustomId('sessionEnd')
-        .setLabel('Session End')
+        .setLabel('Session End Time')
         .setPlaceholder('e.g. In 12 hr, 4 mins')
         .setStyle(TextInputStyle.Short)
         .setRequired(true);
 
       const infoInput = new TextInputBuilder()
         .setCustomId('info')
-        .setLabel('Info / Next Session')
-        .setPlaceholder('e.g. Next session: Saturday at 6PM')
+        .setLabel('Info / Next Session + Image URLs')
+        .setPlaceholder('Next session: Saturday 6PM | Banner: url | Thumb: url')
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(true);
 
-      const imageInput = new TextInputBuilder()
-        .setCustomId('imageUrl')
-        .setLabel('Image URL (optional)')
-        .setPlaceholder('Paste a direct image link or leave blank')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false);
-
       modal.addComponents(
+        new ActionRowBuilder().addComponents(serverNameInput),
         new ActionRowBuilder().addComponents(serverLinkInput),
         new ActionRowBuilder().addComponents(playerCountInput),
         new ActionRowBuilder().addComponents(sessionEndInput),
         new ActionRowBuilder().addComponents(infoInput),
-        new ActionRowBuilder().addComponents(imageInput),
       );
 
       await interaction.showModal(modal);
@@ -171,16 +177,20 @@ client.on('interactionCreate', async interaction => {
           .setTitle('🎮 Session Ended')
           .setColor('#FF4444')
           .addFields(
-            { name: '🔴 STATUS', value: '**Offline**', inline: true },
-            { name: '⏱️ TOTAL UPTIME', value: formatUptime(session.startTime), inline: true },
-            { name: '📋 INFO', value: session.data.info, inline: false }
+            { name: '🔴  STATUS', value: '```\nOffline\n```', inline: true },
+            { name: '⏱️  TOTAL UPTIME', value: `\`\`\`\n${formatUptime(session.startTime)}\n\`\`\``, inline: true },
+            { name: '\u200B', value: '\u200B', inline: false },
+            { name: '📋  INFO', value: session.data.info, inline: false }
           )
           .setFooter({ text: 'Session has ended. See you next time!' });
+        if (session.data.thumbnailUrl && session.data.thumbnailUrl.startsWith('http')) {
+          endedEmbed.setThumbnail(session.data.thumbnailUrl);
+        }
         if (session.data.imageUrl && session.data.imageUrl.startsWith('http')) {
           endedEmbed.setImage(session.data.imageUrl);
         }
         await msg.edit({ embeds: [endedEmbed] });
-      } catch (e) {}
+      } catch (e) { console.error(e); }
 
       delete sessions[interaction.channelId];
       return interaction.reply({ content: '✅ Session has been ended.', ephemeral: true });
@@ -197,18 +207,30 @@ client.on('interactionCreate', async interaction => {
         const channel = await client.channels.fetch(interaction.channelId);
         const msg = await channel.messages.fetch(session.messageId);
         await msg.edit({ embeds: [buildSessionEmbed(session.data, formatUptime(session.startTime))] });
-      } catch (e) {}
+      } catch (e) { console.error(e); }
       return interaction.reply({ content: `✅ Player count updated to **${count}**`, ephemeral: true });
     }
   }
 
   if (interaction.isModalSubmit() && interaction.customId === 'session_modal') {
+    const rawInfo = interaction.fields.getTextInputValue('info');
+
+    // Parse optional banner and thumbnail URLs from the info field
+    const bannerMatch = rawInfo.match(/Banner:\s*(https?:\/\/\S+)/i);
+    const thumbMatch = rawInfo.match(/Thumb:\s*(https?:\/\/\S+)/i);
+    const cleanInfo = rawInfo
+      .replace(/Banner:\s*https?:\/\/\S+/i, '')
+      .replace(/Thumb:\s*https?:\/\/\S+/i, '')
+      .trim();
+
     const data = {
+      serverName: interaction.fields.getTextInputValue('serverName'),
       serverLink: interaction.fields.getTextInputValue('serverLink'),
       playerCount: interaction.fields.getTextInputValue('playerCount'),
       sessionEnd: interaction.fields.getTextInputValue('sessionEnd'),
-      info: interaction.fields.getTextInputValue('info'),
-      imageUrl: interaction.fields.getTextInputValue('imageUrl') || null,
+      info: cleanInfo,
+      imageUrl: bannerMatch ? bannerMatch[1] : null,
+      thumbnailUrl: thumbMatch ? thumbMatch[1] : null,
     };
 
     await interaction.deferReply({ ephemeral: true });
