@@ -14,6 +14,7 @@ const {
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const STAFF_ROLE_NAME = 'AT | 𝐀𝐝𝐦𝐢𝐧𝐬𝐭𝐫𝐚𝐭𝐢𝐨𝐧 𝐓𝐞𝐚𝐦';
+const POLICE_ROLE_NAME = 'PD | 𝐏𝐨𝐥𝐢𝐜𝐞 𝐃𝐞𝐩𝐚𝐫𝐭𝐦𝐞𝐧𝐭';
 
 const client = new Client({
   intents: [
@@ -57,7 +58,7 @@ client.once('ready', async () => {
 });
 
 function isStaff(member) {
-  return member.roles.cache.some(r => r.name === STAFF_ROLE_NAME);
+  return member.roles.cache.some(r => r.name === STAFF_ROLE_NAME || r.name === POLICE_ROLE_NAME);
 }
 
 function formatUptime(startTime) {
