@@ -14,7 +14,6 @@ const {
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const STAFF_ROLE_NAME = 'AT | 𝐀𝐝𝐦𝐢𝐧𝐬𝐭𝐫𝐚𝐭𝐢𝐨𝐧 𝐓𝐞𝐚𝐦';
-const POLICE_ROLE_NAME = 'PD | 𝐏𝐨𝐥𝐢𝐜𝐞 𝐃𝐞𝐩𝐚𝐫𝐭𝐦𝐞𝐧𝐭';
 
 const client = new Client({
   intents: [
@@ -44,6 +43,10 @@ const commands = [
       opt.setName('count').setDescription('New player count e.g. 11/15').setRequired(true)
     )
     .toJSON(),
+  new SlashCommandBuilder()
+    .setName('announce')
+    .setDescription('Post an announcement embed (Staff only)')
+    .toJSON(),
 ];
 
 client.once('ready', async () => {
@@ -58,7 +61,7 @@ client.once('ready', async () => {
 });
 
 function isStaff(member) {
-  return member.roles.cache.some(r => r.name === STAFF_ROLE_NAME || r.name === POLICE_ROLE_NAME);
+  return member.roles.cache.some(r => r.name === STAFF_ROLE_NAME);
 }
 
 function formatUptime(startTime) {
@@ -88,11 +91,9 @@ function buildSessionEmbed(data, uptime) {
   if (data.thumbnailUrl && data.thumbnailUrl.startsWith('http')) {
     embed.setThumbnail(data.thumbnailUrl);
   }
-
   if (data.imageUrl && data.imageUrl.startsWith('http')) {
     embed.setImage(data.imageUrl);
   }
-
   return embed;
 }
 
@@ -168,9 +169,7 @@ client.on('interactionCreate', async interaction => {
       if (!session) {
         return interaction.reply({ content: '❌ There is no active session in this channel.', ephemeral: true });
       }
-
       clearInterval(session.intervalId);
-
       try {
         const channel = await client.channels.fetch(interaction.channelId);
         const msg = await channel.messages.fetch(session.messageId);
@@ -192,7 +191,6 @@ client.on('interactionCreate', async interaction => {
         }
         await msg.edit({ embeds: [endedEmbed] });
       } catch (e) { console.error(e); }
-
       delete sessions[interaction.channelId];
       return interaction.reply({ content: '✅ Session has been ended.', ephemeral: true });
     }
@@ -211,12 +209,58 @@ client.on('interactionCreate', async interaction => {
       } catch (e) { console.error(e); }
       return interaction.reply({ content: `✅ Player count updated to **${count}**`, ephemeral: true });
     }
+
+    if (commandName === 'announce') {
+      if (!isStaff(interaction.member)) {
+        return interaction.reply({ content: '❌ You do not have permission to post announcements.', ephemeral: true });
+      }
+
+      const modal = new ModalBuilder()
+        .setCustomId('announce_modal')
+        .setTitle('📢 Post Announcement');
+
+      const titleInput = new TextInputBuilder()
+        .setCustomId('title')
+        .setLabel('Title')
+        .setPlaceholder('e.g. Session Startup Rules')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const bodyInput = new TextInputBuilder()
+        .setCustomId('body')
+        .setLabel('Body')
+        .setPlaceholder('Type your announcement here...')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true);
+
+      const colorInput = new TextInputBuilder()
+        .setCustomId('color')
+        .setLabel('Color (hex code, optional)')
+        .setPlaceholder('e.g. #FF0000 — leave blank for default green')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+
+      const imageInput = new TextInputBuilder()
+        .setCustomId('imageUrl')
+        .setLabel('Image URL (optional)')
+        .setPlaceholder('Paste a direct image link or leave blank')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(titleInput),
+        new ActionRowBuilder().addComponents(bodyInput),
+        new ActionRowBuilder().addComponents(colorInput),
+        new ActionRowBuilder().addComponents(imageInput),
+      );
+
+      await interaction.showModal(modal);
+      return;
+    }
   }
 
   if (interaction.isModalSubmit() && interaction.customId === 'session_modal') {
     const rawInfo = interaction.fields.getTextInputValue('info');
-
-    // Parse optional banner and thumbnail URLs from the info field
     const bannerMatch = rawInfo.match(/Banner:\s*(https?:\/\/\S+)/i);
     const thumbMatch = rawInfo.match(/Thumb:\s*(https?:\/\/\S+)/i);
     const cleanInfo = rawInfo
@@ -260,6 +304,36 @@ client.on('interactionCreate', async interaction => {
     } catch (err) {
       console.error(err);
       await interaction.editReply({ content: '❌ Something went wrong posting the session.' });
+    }
+  }
+
+  if (interaction.isModalSubmit() && interaction.customId === 'announce_modal') {
+    const title = interaction.fields.getTextInputValue('title');
+    const body = interaction.fields.getTextInputValue('body');
+    const colorInput = interaction.fields.getTextInputValue('color').trim();
+    const imageUrl = interaction.fields.getTextInputValue('imageUrl').trim();
+
+    const color = /^#[0-9A-Fa-f]{6}$/.test(colorInput) ? colorInput : '#00FF7F';
+
+    await interaction.deferReply({ ephemeral: true });
+
+    try {
+      const embed = new EmbedBuilder()
+        .setTitle(title)
+        .setDescription(body)
+        .setColor(color)
+        .setFooter({ text: `Posted by ${interaction.user.username}` })
+        .setTimestamp();
+
+      if (imageUrl.startsWith('http')) {
+        embed.setImage(imageUrl);
+      }
+
+      await interaction.channel.send({ embeds: [embed] });
+      await interaction.editReply({ content: '✅ Announcement posted!' });
+    } catch (err) {
+      console.error(err);
+      await interaction.editReply({ content: '❌ Something went wrong posting the announcement.' });
     }
   }
 });
