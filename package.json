@@ -2,9 +2,9 @@
   "name": "session-bot",
   "version": "1.0.0",
   "description": "Discord session management bot",
-  "main": "bot.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "discord.js": "^14.15.3"
