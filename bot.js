@@ -87,7 +87,7 @@ const commands = [
 
 // ─── READY ───────────────────────────────────────────────────────────────────
 
-client.once('ready', async () => {
+client.once('clientReady', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
@@ -218,7 +218,7 @@ function buildSessionStatusEmbed(data, uptime) {
 async function updatePlayerCount(interaction, count) {
   const session = sessions[interaction.channelId];
   if (!session) {
-    return interaction.reply({ content: '❌ There is no active session in this channel.', ephemeral: true });
+    return interaction.reply({ content: '❌ There is no active session in this channel.', flags: 64 });
   }
   session.data.playerCount = count;
 
@@ -232,7 +232,7 @@ async function updatePlayerCount(interaction, count) {
     console.error(e);
   }
 
-  return interaction.reply({ content: `✅ Player count updated to **${count}**`, ephemeral: true });
+  return interaction.reply({ content: `✅ Player count updated to **${count}**`, flags: 64 });
 }
 
 // ─── INTERACTION HANDLER ──────────────────────────────────────────────────────
@@ -247,7 +247,7 @@ client.on('interactionCreate', async interaction => {
     // /sessioninfo — show modal
     if (commandName === 'sessioninfo') {
       if (!isStaff(interaction.member)) {
-        return interaction.reply({ content: '❌ You do not have permission.', ephemeral: true });
+        return interaction.reply({ content: '❌ You do not have permission.', flags: 64 });
       }
 
       const modal = new ModalBuilder()
@@ -270,7 +270,7 @@ client.on('interactionCreate', async interaction => {
 
       const speedInput = new TextInputBuilder()
         .setCustomId('speeds')
-        .setLabel('Speed Limits (Mainroad / Dirtroad / Town)')
+        .setLabel('Speed Limits (Mainroad/Dirtroad/Town)')
         .setPlaceholder('e.g. 70 / 55 / 50')
         .setStyle(TextInputStyle.Short)
         .setRequired(false);
@@ -284,7 +284,7 @@ client.on('interactionCreate', async interaction => {
 
       const bannerInput = new TextInputBuilder()
         .setCustomId('bannerUrl')
-        .setLabel('Banner Image URL (optional, top-right thumbnail)')
+        .setLabel('Banner URL (optional, top-right)')
         .setPlaceholder('https://... — leave blank to skip')
         .setStyle(TextInputStyle.Short)
         .setRequired(false);
@@ -304,12 +304,12 @@ client.on('interactionCreate', async interaction => {
     // /sessionstatus — show modal
     if (commandName === 'sessionstatus') {
       if (!isStaff(interaction.member)) {
-        return interaction.reply({ content: '❌ You do not have permission.', ephemeral: true });
+        return interaction.reply({ content: '❌ You do not have permission.', flags: 64 });
       }
 
       const session = sessions[interaction.channelId];
       if (!session) {
-        return interaction.reply({ content: '❌ No active session in this channel. Run /sessioninfo first.', ephemeral: true });
+        return interaction.reply({ content: '❌ No active session in this channel. Run /sessioninfo first.', flags: 64 });
       }
 
       const modal = new ModalBuilder()
@@ -339,7 +339,7 @@ client.on('interactionCreate', async interaction => {
 
       const imageInput = new TextInputBuilder()
         .setCustomId('imageUrl')
-        .setLabel('Banner/Bottom Image URL (optional)')
+        .setLabel('Bottom Banner URL (optional)')
         .setPlaceholder('https://... or leave blank')
         .setStyle(TextInputStyle.Short)
         .setRequired(false);
@@ -358,11 +358,11 @@ client.on('interactionCreate', async interaction => {
     // /session end
     if (commandName === 'session' && interaction.options.getSubcommand() === 'end') {
       if (!isStaff(interaction.member)) {
-        return interaction.reply({ content: '❌ You do not have permission.', ephemeral: true });
+        return interaction.reply({ content: '❌ You do not have permission.', flags: 64 });
       }
       const session = sessions[interaction.channelId];
       if (!session) {
-        return interaction.reply({ content: '❌ There is no active session in this channel.', ephemeral: true });
+        return interaction.reply({ content: '❌ There is no active session in this channel.', flags: 64 });
       }
       clearInterval(session.intervalId);
 
@@ -389,31 +389,31 @@ client.on('interactionCreate', async interaction => {
       } catch (e) { console.error(e); }
 
       delete sessions[interaction.channelId];
-      return interaction.reply({ content: '✅ Session has been ended.', ephemeral: true });
+      return interaction.reply({ content: '✅ Session has been ended.', flags: 64 });
     }
 
     // /playercountmid
     if (commandName === 'playercountmid') {
-      if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ No permission.', ephemeral: true });
+      if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ No permission.', flags: 64 });
       return updatePlayerCount(interaction, interaction.options.getString('count'));
     }
 
     // /playercountfull
     if (commandName === 'playercountfull') {
-      if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ No permission.', ephemeral: true });
+      if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ No permission.', flags: 64 });
       return updatePlayerCount(interaction, interaction.options.getString('count'));
     }
 
     // /playercountlow
     if (commandName === 'playercountlow') {
-      if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ No permission.', ephemeral: true });
+      if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ No permission.', flags: 64 });
       return updatePlayerCount(interaction, interaction.options.getString('count'));
     }
 
     // /announce
     if (commandName === 'announce') {
       if (!isStaff(interaction.member)) {
-        return interaction.reply({ content: '❌ You do not have permission.', ephemeral: true });
+        return interaction.reply({ content: '❌ You do not have permission.', flags: 64 });
       }
       const modal = new ModalBuilder()
         .setCustomId('announce_modal')
@@ -444,7 +444,7 @@ client.on('interactionCreate', async interaction => {
 
     // /sessioninfo modal submitted
     if (interaction.customId === 'sessioninfo_modal') {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: 64 });
 
       const rawSpeeds = interaction.fields.getTextInputValue('speeds') || '70 / 55 / 50';
       const speedParts = rawSpeeds.split('/').map(s => s.trim());
@@ -492,7 +492,7 @@ client.on('interactionCreate', async interaction => {
 
     // /sessionstatus modal submitted
     if (interaction.customId === 'sessionstatus_modal') {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: 64 });
 
       const session = sessions[interaction.channelId];
       if (!session) {
@@ -539,7 +539,7 @@ client.on('interactionCreate', async interaction => {
       const imageUrl = interaction.fields.getTextInputValue('imageUrl').trim();
       const color = /^#[0-9A-Fa-f]{6}$/.test(colorInput) ? colorInput : EMBED_COLOR;
 
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: 64 });
       try {
         const embed = new EmbedBuilder()
           .setTitle(title)
@@ -569,7 +569,7 @@ client.on('interactionCreate', async interaction => {
       if (!session) {
         return interaction.reply({
           content: '❌ No active session found.',
-          ephemeral: true,
+          flags: 64,
         });
       }
 
@@ -584,7 +584,7 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({
         content: '✅ Here is your private server link! Only you can see this.',
         components: [row],
-        ephemeral: true,
+        flags: 64,
       });
     }
 
@@ -601,7 +601,7 @@ client.on('interactionCreate', async interaction => {
       return interaction.reply({
         content: `By clicking here, you are letting us know that you enjoyed the session and would like to vouch for and support the host in the future!`,
         components: [row],
-        ephemeral: true,
+        flags: 64,
       });
     }
 
