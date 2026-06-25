@@ -172,14 +172,12 @@ function buildSessionInfoButtons() {
   const joinBtn = new ButtonBuilder()
     .setCustomId('join_session')
     .setLabel('Join Session')
-    .setStyle(ButtonStyle.Primary)
-    .setEmoji('');
+    .setStyle(ButtonStyle.Primary);
 
   const vouchBtn = new ButtonBuilder()
     .setCustomId('vouch_session')
     .setLabel('Vouch')
-    .setStyle(ButtonStyle.Success)
-    .setEmoji('');
+    .setStyle(ButtonStyle.Success);
 
   return new ActionRowBuilder().addComponents(joinBtn, vouchBtn);
 }
@@ -576,8 +574,7 @@ client.on('interactionCreate', async interaction => {
       const joinBtn = new ButtonBuilder()
         .setLabel('Open Roblox Server')
         .setStyle(ButtonStyle.Link)
-        .setURL(session.data.serverLink)
-        .setEmoji('🎮');
+        .setURL(session.data.serverLink);
 
       const row = new ActionRowBuilder().addComponents(joinBtn);
 
@@ -593,8 +590,7 @@ client.on('interactionCreate', async interaction => {
       const confirmBtn = new ButtonBuilder()
         .setCustomId('vouch_confirm')
         .setLabel('Yes, submit my vouch!')
-        .setStyle(ButtonStyle.Success)
-        .setEmoji('✅');
+        .setStyle(ButtonStyle.Success);
 
       const row = new ActionRowBuilder().addComponents(confirmBtn);
 
