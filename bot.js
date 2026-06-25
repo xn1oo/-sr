@@ -173,13 +173,13 @@ function buildSessionInfoButtons() {
     .setCustomId('join_session')
     .setLabel('Join Session')
     .setStyle(ButtonStyle.Primary)
-    .setEmoji('🎮');
+    .setEmoji('');
 
   const vouchBtn = new ButtonBuilder()
     .setCustomId('vouch_session')
     .setLabel('Vouch')
     .setStyle(ButtonStyle.Success)
-    .setEmoji('✅');
+    .setEmoji('');
 
   return new ActionRowBuilder().addComponents(joinBtn, vouchBtn);
 }
