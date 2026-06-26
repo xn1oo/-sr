@@ -12,6 +12,8 @@ const {
   ButtonBuilder,
   ButtonStyle,
 } = require('discord.js');
+const fs = require('fs');
+const path = require('path');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -20,6 +22,7 @@ const VOUCH_CHANNEL_ID = '1519725522093998210';
 const RULES_CHANNEL_1 = '<#1507975080569864292>';
 const RULES_CHANNEL_2 = '<#1509312398039974078>';
 const EMBED_COLOR = '#ffcf24';
+const SESSIONS_FILE = path.join(__dirname, 'sessions.json');
 
 const client = new Client({
   intents: [
@@ -29,16 +32,62 @@ const client = new Client({
   ],
 });
 
-// Store active sessions per channel
-// { [channelId]: { sessionInfoMessageId, sessionStatusMessageId, startTime, intervalId, data, hostId, coHostId } }
-const sessions = {};
+// ─── PERSISTENT SESSION STORAGE ──────────────────────────────────────────────
+// Sessions are saved to disk so they survive bot restarts.
+// intervalId is NOT saved (can't serialize), we restart intervals on boot.
+
+let sessions = {};
+
+function loadSessions() {
+  try {
+    if (fs.existsSync(SESSIONS_FILE)) {
+      const raw = fs.readFileSync(SESSIONS_FILE, 'utf8');
+      sessions = JSON.parse(raw);
+      console.log(`✅ Loaded ${Object.keys(sessions).length} session(s) from disk.`);
+    }
+  } catch (e) {
+    console.error('Failed to load sessions:', e);
+    sessions = {};
+  }
+}
+
+function saveSessions() {
+  try {
+    // Don't save intervalId — it can't be serialized
+    const toSave = {};
+    for (const [channelId, session] of Object.entries(sessions)) {
+      const { intervalId, ...rest } = session;
+      toSave[channelId] = rest;
+    }
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(toSave, null, 2));
+  } catch (e) {
+    console.error('Failed to save sessions:', e);
+  }
+}
+
+function startUptimeInterval(channelId) {
+  const session = sessions[channelId];
+  if (!session || !session.statusMessageId) return;
+
+  if (session.intervalId) clearInterval(session.intervalId);
+
+  session.intervalId = setInterval(async () => {
+    try {
+      const channel = await client.channels.fetch(channelId);
+      const statusMsg = await channel.messages.fetch(session.statusMessageId);
+      await statusMsg.edit({ embeds: [buildSessionStatusEmbed(session.data, formatUptime(session.startTime))] });
+    } catch (e) {
+      clearInterval(session.intervalId);
+    }
+  }, 30000);
+}
 
 // ─── COMMANDS ────────────────────────────────────────────────────────────────
 
 const commands = [
   new SlashCommandBuilder()
     .setName('sessioninfo')
-    .setDescription('Post the session info embed (Staff only)')
+    .setDescription('Start a session and post the session info embed (Staff only)')
     .toJSON(),
 
   new SlashCommandBuilder()
@@ -78,7 +127,6 @@ const commands = [
     )
     .toJSON(),
 
-  // Legacy announce command
   new SlashCommandBuilder()
     .setName('announce')
     .setDescription('Post an announcement embed (Staff only)')
@@ -89,6 +137,17 @@ const commands = [
 
 client.once('clientReady', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
+
+  loadSessions();
+
+  // Restart uptime intervals for any sessions that were active before restart
+  for (const channelId of Object.keys(sessions)) {
+    if (sessions[channelId].statusMessageId) {
+      startUptimeInterval(channelId);
+      console.log(`↩️  Resumed interval for channel ${channelId}`);
+    }
+  }
+
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
     await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
@@ -131,11 +190,11 @@ function buildSessionInfoEmbed(data) {
         name: '🚗  Roleplay Information',
         value: [
           `**Speedlimit:**`,
-          `\`\`\``,
+          '```',
           `Mainroad  │ ${data.speedMainroad || '70'} MPH`,
           `Dirtroad  │ ${data.speedDirtroad || '55'} MPH`,
           `Town      │ ${data.speedTown || '50'} MPH`,
-          `\`\`\``,
+          '```',
         ].join('\n'),
         inline: false,
       },
@@ -143,7 +202,7 @@ function buildSessionInfoEmbed(data) {
         name: '🔗  Joining the Session',
         value: [
           `**Agreement:** When joining this ongoing session, you agree to comply with the ${RULES_CHANNEL_1} and ${RULES_CHANNEL_2}. I will do my best to follow these rules. I also agree for the Maryland State RP Staff Team to take appropriate action against my account and address any rules violations in-session.`,
-          ``,
+          '',
           `**Click the Join Session button below:** You will receive the correct session role and then be given the Roblox join button.`,
         ].join('\n'),
         inline: false,
@@ -199,7 +258,7 @@ function buildSessionStatusEmbed(data, uptime) {
       { name: '\u200B', value: '\u200B', inline: false },
       { name: '📋  INFO', value: data.info || 'No info provided.', inline: false },
     )
-    .setFooter({ text: 'Session is live! Use /playercountmid, /playercountfull, or /playercountlow to update players.' });
+    .setFooter({ text: 'Use /playercountmid, /playercountfull, or /playercountlow to update.' });
 
   if (data.thumbnailUrl && data.thumbnailUrl.startsWith('http')) {
     embed.setThumbnail(data.thumbnailUrl);
@@ -211,7 +270,7 @@ function buildSessionStatusEmbed(data, uptime) {
   return embed;
 }
 
-// ─── UPDATE PLAYER COUNT HELPER ──────────────────────────────────────────────
+// ─── UPDATE PLAYER COUNT ──────────────────────────────────────────────────────
 
 async function updatePlayerCount(interaction, count) {
   const session = sessions[interaction.channelId];
@@ -219,6 +278,7 @@ async function updatePlayerCount(interaction, count) {
     return interaction.reply({ content: '❌ There is no active session in this channel.', flags: 64 });
   }
   session.data.playerCount = count;
+  saveSessions();
 
   try {
     if (session.statusMessageId) {
@@ -242,7 +302,7 @@ client.on('interactionCreate', async interaction => {
   if (interaction.isChatInputCommand()) {
     const { commandName } = interaction;
 
-    // /sessioninfo — show modal
+    // /sessioninfo
     if (commandName === 'sessioninfo') {
       if (!isStaff(interaction.member)) {
         return interaction.reply({ content: '❌ You do not have permission.', flags: 64 });
@@ -252,101 +312,99 @@ client.on('interactionCreate', async interaction => {
         .setCustomId('sessioninfo_modal')
         .setTitle('📋 Session Info Setup');
 
-      const serverNameInput = new TextInputBuilder()
-        .setCustomId('serverName')
-        .setLabel('Server Name')
-        .setPlaceholder('e.g. Maryland State Roleplay')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      const coHostInput = new TextInputBuilder()
-        .setCustomId('coHostId')
-        .setLabel('CoHost User ID (optional)')
-        .setPlaceholder('e.g. 123456789012345678 — leave blank if none')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false);
-
-      const speedInput = new TextInputBuilder()
-        .setCustomId('speeds')
-        .setLabel('Speed Limits (Mainroad/Dirtroad/Town)')
-        .setPlaceholder('e.g. 70 / 55 / 50')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false);
-
-      const serverLinkInput = new TextInputBuilder()
-        .setCustomId('serverLink')
-        .setLabel('Roblox Private Server Link')
-        .setPlaceholder('https://www.roblox.com/games/...')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      const bannerInput = new TextInputBuilder()
-        .setCustomId('bannerUrl')
-        .setLabel('Banner URL (optional, top-right)')
-        .setPlaceholder('https://... — leave blank to skip')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false);
-
       modal.addComponents(
-        new ActionRowBuilder().addComponents(serverNameInput),
-        new ActionRowBuilder().addComponents(coHostInput),
-        new ActionRowBuilder().addComponents(speedInput),
-        new ActionRowBuilder().addComponents(serverLinkInput),
-        new ActionRowBuilder().addComponents(bannerInput),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('serverName')
+            .setLabel('Server Name')
+            .setPlaceholder('e.g. Maryland State Roleplay')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('coHostId')
+            .setLabel('CoHost User ID (optional)')
+            .setPlaceholder('Right-click user > Copy ID, or leave blank')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('speeds')
+            .setLabel('Speed Limits (Mainroad/Dirtroad/Town)')
+            .setPlaceholder('e.g. 70 / 55 / 50')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('serverLink')
+            .setLabel('Roblox Private Server Link')
+            .setPlaceholder('https://www.roblox.com/games/...')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('bannerUrl')
+            .setLabel('Banner URL (optional, top-right)')
+            .setPlaceholder('https://... or leave blank')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+        ),
       );
 
       await interaction.showModal(modal);
       return;
     }
 
-    // /sessionstatus — show modal
+    // /sessionstatus
     if (commandName === 'sessionstatus') {
       if (!isStaff(interaction.member)) {
         return interaction.reply({ content: '❌ You do not have permission.', flags: 64 });
       }
-
-      const session = sessions[interaction.channelId];
-      if (!session) {
-        return interaction.reply({ content: '❌ No active session in this channel. Run /sessioninfo first.', flags: 64 });
+      if (!sessions[interaction.channelId]) {
+        return interaction.reply({ content: '❌ No active session. Run `/sessioninfo` first.', flags: 64 });
       }
 
       const modal = new ModalBuilder()
         .setCustomId('sessionstatus_modal')
         .setTitle('📊 Session Status Setup');
 
-      const sessionEndInput = new TextInputBuilder()
-        .setCustomId('sessionEnd')
-        .setLabel('Session End Time')
-        .setPlaceholder('e.g. In 2 hrs, 30 mins')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      const infoInput = new TextInputBuilder()
-        .setCustomId('info')
-        .setLabel('Info / Next Session Details')
-        .setPlaceholder('e.g. Next session: Saturday 6PM EST')
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(false);
-
-      const thumbnailInput = new TextInputBuilder()
-        .setCustomId('thumbnailUrl')
-        .setLabel('Thumbnail URL (top-right, optional)')
-        .setPlaceholder('https://... or leave blank')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false);
-
-      const imageInput = new TextInputBuilder()
-        .setCustomId('imageUrl')
-        .setLabel('Bottom Banner URL (optional)')
-        .setPlaceholder('https://... or leave blank')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false);
-
       modal.addComponents(
-        new ActionRowBuilder().addComponents(sessionEndInput),
-        new ActionRowBuilder().addComponents(infoInput),
-        new ActionRowBuilder().addComponents(thumbnailInput),
-        new ActionRowBuilder().addComponents(imageInput),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('sessionEnd')
+            .setLabel('Session End Time')
+            .setPlaceholder('e.g. In 2 hrs, 30 mins')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('info')
+            .setLabel('Info / Next Session Details')
+            .setPlaceholder('e.g. Next session: Saturday 6PM EST')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(false)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('thumbnailUrl')
+            .setLabel('Thumbnail URL (top-right, optional)')
+            .setPlaceholder('https://... or leave blank')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('imageUrl')
+            .setLabel('Bottom Banner URL (optional)')
+            .setPlaceholder('https://... or leave blank')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+        ),
       );
 
       await interaction.showModal(modal);
@@ -362,7 +420,8 @@ client.on('interactionCreate', async interaction => {
       if (!session) {
         return interaction.reply({ content: '❌ There is no active session in this channel.', flags: 64 });
       }
-      clearInterval(session.intervalId);
+
+      if (session.intervalId) clearInterval(session.intervalId);
 
       const endedEmbed = new EmbedBuilder()
         .setTitle('🎮 Session Ended')
@@ -387,23 +446,12 @@ client.on('interactionCreate', async interaction => {
       } catch (e) { console.error(e); }
 
       delete sessions[interaction.channelId];
+      saveSessions();
       return interaction.reply({ content: '✅ Session has been ended.', flags: 64 });
     }
 
-    // /playercountmid
-    if (commandName === 'playercountmid') {
-      if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ No permission.', flags: 64 });
-      return updatePlayerCount(interaction, interaction.options.getString('count'));
-    }
-
-    // /playercountfull
-    if (commandName === 'playercountfull') {
-      if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ No permission.', flags: 64 });
-      return updatePlayerCount(interaction, interaction.options.getString('count'));
-    }
-
-    // /playercountlow
-    if (commandName === 'playercountlow') {
+    // /playercountmid / full / low
+    if (['playercountmid', 'playercountfull', 'playercountlow'].includes(commandName)) {
       if (!isStaff(interaction.member)) return interaction.reply({ content: '❌ No permission.', flags: 64 });
       return updatePlayerCount(interaction, interaction.options.getString('count'));
     }
@@ -425,7 +473,7 @@ client.on('interactionCreate', async interaction => {
           new TextInputBuilder().setCustomId('body').setLabel('Body').setPlaceholder('Type your announcement here...').setStyle(TextInputStyle.Paragraph).setRequired(true)
         ),
         new ActionRowBuilder().addComponents(
-          new TextInputBuilder().setCustomId('color').setLabel('Color (hex, optional)').setPlaceholder('e.g. #FF0000 — leave blank for default').setStyle(TextInputStyle.Short).setRequired(false)
+          new TextInputBuilder().setCustomId('color').setLabel('Color (hex, optional)').setPlaceholder('#FF0000 — leave blank for default').setStyle(TextInputStyle.Short).setRequired(false)
         ),
         new ActionRowBuilder().addComponents(
           new TextInputBuilder().setCustomId('imageUrl').setLabel('Image URL (optional)').setPlaceholder('Paste a direct image link or leave blank').setStyle(TextInputStyle.Short).setRequired(false)
@@ -440,18 +488,18 @@ client.on('interactionCreate', async interaction => {
 
   if (interaction.isModalSubmit()) {
 
-    // /sessioninfo modal submitted
     if (interaction.customId === 'sessioninfo_modal') {
       await interaction.deferReply({ flags: 64 });
 
       const rawSpeeds = interaction.fields.getTextInputValue('speeds') || '70 / 55 / 50';
       const speedParts = rawSpeeds.split('/').map(s => s.trim());
       const coHostRaw = interaction.fields.getTextInputValue('coHostId').trim();
+      const bannerRaw = interaction.fields.getTextInputValue('bannerUrl').trim();
 
       const data = {
         serverName: interaction.fields.getTextInputValue('serverName'),
         serverLink: interaction.fields.getTextInputValue('serverLink'),
-        bannerUrl: interaction.fields.getTextInputValue('bannerUrl').trim() || null,
+        bannerUrl: bannerRaw.startsWith('http') ? bannerRaw : null,
         hostId: interaction.user.id,
         coHostId: coHostRaw || null,
         speedMainroad: speedParts[0] || '70',
@@ -469,18 +517,16 @@ client.on('interactionCreate', async interaction => {
         const row = buildSessionInfoButtons();
         const msg = await interaction.channel.send({ embeds: [embed], components: [row] });
 
-        const startTime = Date.now();
-
-        // Initialize session (status message set later by /sessionstatus)
         sessions[interaction.channelId] = {
           infoMessageId: msg.id,
           statusMessageId: null,
-          startTime,
+          startTime: Date.now(),
           data,
           intervalId: null,
         };
+        saveSessions();
 
-        await interaction.editReply({ content: '✅ Session info posted! Now run `/sessionstatus` to post the live status embed.' });
+        await interaction.editReply({ content: '✅ Session started! Now run `/sessionstatus` to post the live status embed.' });
       } catch (err) {
         console.error(err);
         await interaction.editReply({ content: '❌ Something went wrong posting the session info.' });
@@ -488,7 +534,6 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    // /sessionstatus modal submitted
     if (interaction.customId === 'sessionstatus_modal') {
       await interaction.deferReply({ flags: 64 });
 
@@ -508,20 +553,11 @@ client.on('interactionCreate', async interaction => {
         const statusEmbed = buildSessionStatusEmbed(session.data, formatUptime(session.startTime));
         const msg = await interaction.channel.send({ embeds: [statusEmbed] });
         session.statusMessageId = msg.id;
+        saveSessions();
 
-        // Start auto-update interval for uptime
-        if (session.intervalId) clearInterval(session.intervalId);
-        session.intervalId = setInterval(async () => {
-          try {
-            const channel = await client.channels.fetch(interaction.channelId);
-            const statusMsg = await channel.messages.fetch(session.statusMessageId);
-            await statusMsg.edit({ embeds: [buildSessionStatusEmbed(session.data, formatUptime(session.startTime))] });
-          } catch (e) {
-            clearInterval(session.intervalId);
-          }
-        }, 30000);
+        startUptimeInterval(interaction.channelId);
 
-        await interaction.editReply({ content: '✅ Session status is now live and updating every 30 seconds!' });
+        await interaction.editReply({ content: '✅ Session status is now live and auto-updating!' });
       } catch (err) {
         console.error(err);
         await interaction.editReply({ content: '❌ Something went wrong posting the status embed.' });
@@ -529,7 +565,6 @@ client.on('interactionCreate', async interaction => {
       return;
     }
 
-    // /announce modal submitted
     if (interaction.customId === 'announce_modal') {
       const title = interaction.fields.getTextInputValue('title');
       const body = interaction.fields.getTextInputValue('body');
@@ -560,13 +595,19 @@ client.on('interactionCreate', async interaction => {
 
   if (interaction.isButton()) {
 
-    // Join Session button — show private link only to the clicker
     if (interaction.customId === 'join_session') {
-      const session = sessions[interaction.channelId];
+      // Search all sessions for one that has this message ID
+      // (in case the button is in a different channel context)
+      let session = sessions[interaction.channelId];
 
+      // Fallback: search all sessions by infoMessageId
       if (!session) {
+        session = Object.values(sessions).find(s => s.infoMessageId === interaction.message.id);
+      }
+
+      if (!session || !session.data?.serverLink) {
         return interaction.reply({
-          content: '❌ No active session found.',
+          content: '❌ No active session found. The session may have ended.',
           flags: 64,
         });
       }
@@ -585,7 +626,6 @@ client.on('interactionCreate', async interaction => {
       });
     }
 
-    // Vouch button — confirmation step
     if (interaction.customId === 'vouch_session') {
       const confirmBtn = new ButtonBuilder()
         .setCustomId('vouch_confirm')
@@ -601,9 +641,12 @@ client.on('interactionCreate', async interaction => {
       });
     }
 
-    // Vouch confirm — send feedback to vouch channel
     if (interaction.customId === 'vouch_confirm') {
-      const session = sessions[interaction.channelId];
+      // Find session by channel or by message
+      let session = sessions[interaction.channelId];
+      if (!session) {
+        session = Object.values(sessions).find(s => s.infoMessageId === interaction.message?.id);
+      }
       const hostId = session?.data?.hostId;
 
       try {
@@ -622,7 +665,7 @@ client.on('interactionCreate', async interaction => {
         await vouchChannel.send({ embeds: [vouchEmbed] });
 
         return interaction.update({
-          content: `✅ Your vouch has been submitted! Thank you for supporting the host${hostId ? ` <@${hostId}>` : ''}.`,
+          content: `✅ Vouch submitted! Thank you for supporting the host${hostId ? ` <@${hostId}>` : ''}.`,
           components: [],
         });
       } catch (err) {
