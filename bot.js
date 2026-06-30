@@ -17,7 +17,13 @@ const path = require('path');
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
-const STAFF_ROLE_NAME = 'AT | 𝐀𝐝𝐦𝐢𝐧𝐬𝐭𝐫𝐚𝐭𝐢𝐨𝐧 𝐓𝐞𝐚𝐦';
+const STAFF_ROLE_NAMES = [
+  'AT | 𝐀𝐝𝐦𝐢𝐧𝐬𝐭𝐫𝐚𝐭𝐢𝐨𝐧 𝐓𝐞𝐚𝐦',
+  'M | 𝐎𝐟𝐟𝐢𝐜𝐢𝐚𝐥 𝐌𝐨𝐝𝐞𝐫𝐚𝐭𝐢𝐨𝐧',
+  'SM | 𝐒𝐞𝐧𝐢𝐨𝐫 𝐌𝐨𝐝𝐞𝐫𝐚𝐭𝐨𝐫',
+  'A | 𝐀𝐝𝐦𝐢𝐧𝐬𝐭𝐫𝐚𝐭𝐢𝐨𝐧',
+  'SH | 𝐒𝐞𝐬𝐬𝐢𝐨𝐧 𝐇𝐨𝐬𝐭𝐞𝐫',
+];
 const VOUCH_CHANNEL_ID = '1519725522093998210';
 const RULES_CHANNEL_1 = '<#1507975080569864292>';
 const RULES_CHANNEL_2 = '<#1509312398039974078>';
@@ -160,7 +166,7 @@ client.once('clientReady', async () => {
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
 function isStaff(member) {
-  return member.roles.cache.some(r => r.name === STAFF_ROLE_NAME);
+  return member.roles.cache.some(r => STAFF_ROLE_NAMES.includes(r.name));
 }
 
 function formatUptime(startTime) {
